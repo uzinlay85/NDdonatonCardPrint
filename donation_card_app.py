@@ -203,25 +203,47 @@ body {{ margin: 0; padding: 0; font-family: 'PrinterFont', sans-serif; box-sizin
                 except Exception: pass
 
 
-# --- Tkinter Desktop GUI Application ---
+# --- Premium Tkinter Desktop GUI Application ---
 
 class DonationCardGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("မြန်မာ အလှူခံကတ် ပရင့်ထုတ်စနစ် (Myanmar Donation Card Printer)")
-        self.root.geometry("1200x780")
-        self.root.minsize(980, 680)
+        self.root.geometry("1280x820")
+        self.root.minsize(1050, 720)
         
+        # --- Modern Premium Design System & Tokens ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
-        self.style.configure('TFrame', background='#f8fafc')
-        self.style.configure('TLabel', background='#f8fafc', font=('Segoe UI', 10), foreground='#334155')
-        self.style.configure('Header.TLabel', font=('Segoe UI', 16, 'bold'), foreground='#0f172a')
-        self.style.configure('TButton', font=('Segoe UI', 10, 'bold'), padding=6)
-        self.style.configure('Accent.TButton', font=('Segoe UI', 11, 'bold'), padding=10, background='#2563eb', foreground='white')
-        self.style.map('Accent.TButton', background=[('active', '#1d4ed8')])
-        self.style.configure('TLabelframe', background='#f8fafc', font=('Segoe UI', 11, 'bold'), foreground='#1e293b')
-        self.style.configure('TLabelframe.Label', font=('Segoe UI', 11, 'bold'), foreground='#1e293b')
+        
+        BG_COLOR = "#f8fafc"       # Crisp slate off-white
+        CARD_BG = "#ffffff"        # Pure white for containers
+        ACCENT_PRIMARY = "#2563eb" # Premium Royal Blue
+        ACCENT_HOVER = "#1d4ed8"   # Deeper blue on hover
+        TEXT_MAIN = "#0f172a"      # Dark slate for headers
+        TEXT_MUTED = "#475569"     # Elegant gray for body text
+        BORDER_LIGHT = "#e2e8f0"   # Subtle divider lines
+        
+        # Configure global styles
+        self.style.configure('TFrame', background=BG_COLOR)
+        self.style.configure('TLabel', background=BG_COLOR, font=('Segoe UI', 10), foreground=TEXT_MAIN)
+        self.style.configure('Card.TFrame', background=CARD_BG)
+        self.style.configure('Header.TLabel', font=('Segoe UI', 18, 'bold'), foreground=ACCENT_PRIMARY, background=BG_COLOR)
+        self.style.configure('SubHeader.TLabel', font=('Segoe UI', 11), foreground=TEXT_MUTED, background=BG_COLOR)
+        
+        self.style.configure('TLabelframe', background=BG_COLOR, font=('Segoe UI', 11, 'bold'), foreground=TEXT_MAIN, borderwidth=1, bordercolor=BORDER_LIGHT)
+        self.style.configure('TLabelframe.Label', font=('Segoe UI', 11, 'bold'), foreground=ACCENT_PRIMARY, background=BG_COLOR)
+        
+        self.style.configure('TButton', font=('Segoe UI', 10, 'bold'), padding=8, background="#f1f5f9", foreground=TEXT_MAIN, borderwidth=1)
+        self.style.map('TButton', background=[('active', '#e2e8f0')])
+        
+        self.style.configure('Accent.TButton', font=('Segoe UI', 12, 'bold'), padding=12, background=ACCENT_PRIMARY, foreground='white', borderwidth=0)
+        self.style.map('Accent.TButton', background=[('active', ACCENT_HOVER)])
+        
+        # Treeview Styling
+        self.style.configure('Treeview', font=('Segoe UI', 10), rowheight=30, background=CARD_BG, fieldbackground=CARD_BG, foreground=TEXT_MAIN, borderwidth=0)
+        self.style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'), background="#f1f5f9", foreground=TEXT_MAIN, padding=8)
+        self.style.map('Treeview', background=[('selected', '#eff6ff')], foreground=[('selected', ACCENT_PRIMARY)])
         
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.default_excel_file = os.path.join(self.base_dir, "DonorsData.xlsx")
@@ -232,7 +254,6 @@ class DonationCardGUI:
         
         self.donors_data = []
         self.generator = PDFCardGenerator(self.default_font_file, self.template_file)
-        
         self.fonts_map = self.get_available_fonts()
         
         self.colors_map = {
@@ -245,9 +266,7 @@ class DonationCardGUI:
             "ရွှေအိုရောင် (Antique Gold)": "#b45309"
         }
         
-        # Load config first to restore saved excel file if any
         self.load_config_initial()
-        
         self._build_ui()
         self.load_excel_data()
         
@@ -335,7 +354,7 @@ class DonationCardGUI:
                         
                 self.x_val_label.config(text=f"{self.x_offset_var.get():+.1f} pt")
                 self.y_val_label.config(text=f"{self.y_offset_var.get():+.1f} pt")
-                self.status_var.set("⚙️ ယခင်သတ်မှတ်ထားသော ချိန်ညှိမှု (Saved Settings) ကို ဖွင့်ပေးထားပါသည်။")
+                self.status_var.set("⚙️ ယခင်သတ်မှတ်ထားသော ဆက်တင်များ (Saved Settings) ကို အလိုအလျောက် ဖွင့်ပေးထားပါသည်။")
             except Exception: pass
 
     def save_config(self):
@@ -362,42 +381,43 @@ class DonationCardGUI:
         self.root.destroy()
 
     def _build_ui(self):
-        main_container = ttk.Frame(self.root, padding="15 15 15 15")
-        main_container.pack(fill=tk.BOTH, expand=True)
+        root_container = ttk.Frame(self.root, padding="20 20 20 20")
+        root_container.pack(fill=tk.BOTH, expand=True)
 
-        header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill=tk.X, pady=(0, 15))
-        title_label = ttk.Label(header_frame, text="အလှူရှင် အချက်အလက်များနှင့် ပရင့်ထုတ်စနစ် (Donation Card Printing System)", style='Header.TLabel')
-        title_label.pack(side=tk.LEFT)
+        # --- Top Header ---
+        header_frame = ttk.Frame(root_container)
+        header_frame.pack(fill=tk.X, pady=(0, 20))
         
-        # Header Buttons
-        btn_frame = ttk.Frame(header_frame)
-        btn_frame.pack(side=tk.RIGHT)
+        title_box = ttk.Frame(header_frame)
+        title_box.pack(side=tk.LEFT)
+        ttk.Label(title_box, text="အလှူရှင် အချက်အလက်များနှင့် ပရင့်ထုတ်စနစ် (Donation Card Printing System)", style='Header.TLabel').pack(anchor="w")
+        ttk.Label(title_box, text="Professional Headless Chromium Engine with DirectWrite OpenType Font Shaping", style='SubHeader.TLabel').pack(anchor="w")
         
-        browse_excel_btn = ttk.Button(btn_frame, text="📂 Excel ဖိုင်ရွေးမည် (Select File)", command=self.browse_excel_file)
-        browse_excel_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        reload_btn = ttk.Button(btn_frame, text="🔄 လက်ရှိဖိုင်ပြန်ဖွင့်မည် (Reload)", command=self.load_excel_data)
-        reload_btn.pack(side=tk.LEFT)
+        btn_box = ttk.Frame(header_frame)
+        btn_box.pack(side=tk.RIGHT, anchor="center")
+        ttk.Button(btn_box, text="📂 Excel ဖိုင်ရွေးမည် (Select File)", command=self.browse_excel_file).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(btn_box, text="🔄 ဒေတာပြန်ဖွင့်မည် (Reload)", command=self.load_excel_data).pack(side=tk.LEFT)
 
-        content_frame = ttk.Frame(main_container)
-        content_frame.pack(fill=tk.BOTH, expand=True)
-        content_frame.columnconfigure(0, weight=3)
-        content_frame.columnconfigure(1, weight=2)
+        # --- Main Layout (Left: Table, Right: Controls) ---
+        main_grid = ttk.Frame(root_container)
+        main_grid.pack(fill=tk.BOTH, expand=True)
+        main_grid.columnconfigure(0, weight=6)
+        main_grid.columnconfigure(1, weight=4)
 
-        table_frame = ttk.LabelFrame(content_frame, text="အလှူရှင် စာရင်း (Donors List from Excel)", padding="10 10 10 10")
-        table_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        # --- Left Table Box ---
+        table_container = ttk.LabelFrame(main_grid, text=" ဇယားရှိ အလှူရှင်စာရင်း (Donors List from Excel) ", padding="12 12 12 12")
+        table_container.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
 
-        select_bar = ttk.Frame(table_frame)
-        select_bar.pack(fill=tk.X, pady=(0, 8))
-        ttk.Button(select_bar, text="☑ အားလုံးရွေးမည် (Select All)", command=self.select_all).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(select_bar, text="☐ ရွေးချယ်မှုဖြုတ်မည် (Deselect All)", command=self.deselect_all).pack(side=tk.LEFT)
+        top_select_bar = ttk.Frame(table_container)
+        top_select_bar.pack(fill=tk.X, pady=(0, 10))
+        ttk.Button(top_select_bar, text="☑ အားလုံးရွေးမည် (Select All)", command=self.select_all).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(top_select_bar, text="☐ ရွေးချယ်မှုဖြုတ်မည် (Deselect All)", command=self.deselect_all).pack(side=tk.LEFT)
         
-        self.excel_label = ttk.Label(select_bar, text=f"📂 {os.path.basename(self.excel_file)}", font=('Segoe UI', 10, 'bold'), foreground="#2563eb")
-        self.excel_label.pack(side=tk.RIGHT, padx=(0, 5))
+        self.excel_badge = ttk.Label(top_select_bar, text=f"📂 {os.path.basename(self.excel_file)}", font=('Segoe UI', 10, 'bold'), foreground="#2563eb")
+        self.excel_badge.pack(side=tk.RIGHT, padx=(0, 5))
 
         columns = ("selected", "id", "name", "amount", "address", "date")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        self.tree = ttk.Treeview(table_container, columns=columns, show="headings", height=16)
         
         self.tree.heading("selected", text="ပရင့်ထုတ်မည်")
         self.tree.heading("id", text="စဉ် (ID)")
@@ -406,123 +426,125 @@ class DonationCardGUI:
         self.tree.heading("address", text="နေရပ်လိပ်စာ (Address)")
         self.tree.heading("date", text="ရက်စွဲ (Date)")
         
-        self.tree.column("selected", width=90, anchor="center")
-        self.tree.column("id", width=60, anchor="center")
-        self.tree.column("name", width=250, anchor="w")
-        self.tree.column("amount", width=140, anchor="e")
-        self.tree.column("address", width=180, anchor="w")
-        self.tree.column("date", width=100, anchor="center")
+        self.tree.column("selected", width=95, anchor="center")
+        self.tree.column("id", width=65, anchor="center")
+        self.tree.column("name", width=260, anchor="w")
+        self.tree.column("amount", width=145, anchor="e")
+        self.tree.column("address", width=190, anchor="w")
+        self.tree.column("date", width=110, anchor="center")
+        
+        self.tree.tag_configure('evenrow', background='#ffffff')
+        self.tree.tag_configure('oddrow', background='#f8fafc')
         
         self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
         
-        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        scrollbar = ttk.Scrollbar(table_container, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscroll=scrollbar.set)
         
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        control_frame = ttk.Frame(content_frame)
-        control_frame.grid(row=0, column=1, sticky="nsew")
+        # --- Right Control Box ---
+        controls_container = ttk.Frame(main_grid)
+        controls_container.grid(row=0, column=1, sticky="nsew")
 
-        mode_group = ttk.LabelFrame(control_frame, text="၁။ ပရင့်မုဒ် ရွေးချယ်ခြင်း (Output Mode)", padding="12 12 12 12")
-        mode_group.pack(fill=tk.X, pady=(0, 10))
+        # 1. Output Mode Group
+        mode_frame = ttk.LabelFrame(controls_container, text=" ၁။ ပရင့်မုဒ် ရွေးချယ်ခြင်း (Output Mode) ", padding="14 14 14 14")
+        mode_frame.pack(fill=tk.X, pady=(0, 15))
 
         self.output_mode = tk.StringVar(value="overlay")
         self.output_mode.trace_add("write", lambda *a: self.save_config())
-        rb_overlay = ttk.Radiobutton(mode_group, text="ကတ်အလွတ်ပေါ်ထပ်ရိုက်မည် (Print Overlay)\n* အသင့်ရှိသော ကတ်အလွတ်များအတွက်", variable=self.output_mode, value="overlay")
-        rb_overlay.pack(anchor="w", pady=5)
         
-        rb_full = ttk.Radiobutton(mode_group, text="ဒီဇိုင်းနောက်ခံပါ ပရင့်ထုတ်မည် (Full Certificate)\n* ဒီဂျစ်တယ်ကတ် သို့မဟုတ် စစ်ဆေးရန်", variable=self.output_mode, value="full")
-        rb_full.pack(anchor="w", pady=5)
+        ttk.Radiobutton(mode_frame, text="ကတ်အလွတ်ပေါ်ထပ်ရိုက်မည် (Print Overlay Mode)\n* အသင့်ရိုက်နှိပ်ထားသော ကတ်အလွတ်များအတွက်", variable=self.output_mode, value="overlay").pack(anchor="w", pady=(0, 8))
+        ttk.Radiobutton(mode_frame, text="ဒီဇိုင်းနောက်ခံပါ ပရင့်ထုတ်မည် (Full Certificate Mode)\n* ဒီဂျစ်တယ်ကတ် သို့မဟုတ် စစ်ဆေးရန်", variable=self.output_mode, value="full").pack(anchor="w")
 
-        type_group = ttk.LabelFrame(control_frame, text="၂။ ဖောင့်နှင့် စာသား နေရာချထားမှု (Typography & Style)", padding="12 12 12 12")
-        type_group.pack(fill=tk.X, pady=(0, 10))
+        # 2. Typography & Style Group
+        style_frame = ttk.LabelFrame(controls_container, text=" ၂။ ဖောင့်နှင့် စာသား နေရာချထားမှု (Typography & Style) ", padding="14 14 14 14")
+        style_frame.pack(fill=tk.X, pady=(0, 15))
         
-        font_frame = ttk.Frame(type_group)
-        font_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(font_frame, text="စာသား ဖောင့် (Font):").pack(side=tk.LEFT)
-        browse_font_btn = ttk.Button(font_frame, text="📂 ဖိုင်ရွေးမည် (Browse)", command=self.browse_custom_font, padding=2)
-        browse_font_btn.pack(side=tk.RIGHT, padx=(5, 0))
-        self.font_cbb = ttk.Combobox(font_frame, values=list(self.fonts_map.keys()), state="readonly", width=22)
+        row1 = ttk.Frame(style_frame)
+        row1.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(row1, text="စာသား ဖောင့် (Font):").pack(side=tk.LEFT)
+        ttk.Button(row1, text="📂 ဖိုင်ရွေးမည်", command=self.browse_custom_font, padding=4).pack(side=tk.RIGHT, padx=(6, 0))
+        self.font_cbb = ttk.Combobox(row1, values=list(self.fonts_map.keys()), state="readonly", width=22)
         self.font_cbb.set("KoZ 008 Uni Regular (Default)")
         self.font_cbb.bind("<<ComboboxSelected>>", lambda e: self.save_config())
         self.font_cbb.pack(side=tk.RIGHT, fill=tk.X, expand=True)
         
-        color_frame = ttk.Frame(type_group)
-        color_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(color_frame, text="စာသားအရောင် (Color):").pack(side=tk.LEFT)
-        self.color_cbb = ttk.Combobox(color_frame, values=list(self.colors_map.keys()), state="readonly", width=25)
+        row2 = ttk.Frame(style_frame)
+        row2.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(row2, text="စာသားအရောင် (Color):").pack(side=tk.LEFT)
+        self.color_cbb = ttk.Combobox(row2, values=list(self.colors_map.keys()), state="readonly", width=25)
         self.color_cbb.set("အပြာရင့် (Royal Blue)")
         self.color_cbb.bind("<<ComboboxSelected>>", lambda e: self.save_config())
         self.color_cbb.pack(side=tk.RIGHT)
         
-        align_frame = ttk.Frame(type_group)
-        align_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(align_frame, text="စာသားနေရာ (Alignment):").pack(side=tk.LEFT)
+        row3 = ttk.Frame(style_frame)
+        row3.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(row3, text="စာသားနေရာ (Alignment):").pack(side=tk.LEFT)
         self.align_var = tk.StringVar(value="center")
         self.align_var.trace_add("write", lambda *a: self.save_config())
-        rb_center = ttk.Radiobutton(align_frame, text="မျဉ်းအလယ် (Center)", variable=self.align_var, value="center")
-        rb_center.pack(side=tk.RIGHT, padx=(5, 0))
-        rb_left = ttk.Radiobutton(align_frame, text="ဘယ်ကပ် (Left)", variable=self.align_var, value="left")
-        rb_left.pack(side=tk.RIGHT)
+        ttk.Radiobutton(row3, text="မျဉ်းအလယ် (Center)", variable=self.align_var, value="center").pack(side=tk.RIGHT, padx=(10, 0))
+        ttk.Radiobutton(row3, text="ဘယ်ကပ် (Left)", variable=self.align_var, value="left").pack(side=tk.RIGHT)
         
-        spacing_frame = ttk.Frame(type_group)
-        spacing_frame.pack(fill=tk.X)
-        ttk.Label(spacing_frame, text="စာကြောင်း(၂)ကြောင်း အကွာအဝေး (Line Spacing):").pack(side=tk.LEFT)
+        row4 = ttk.Frame(style_frame)
+        row4.pack(fill=tk.X)
+        ttk.Label(row4, text="စာကြောင်း(၂)ကြောင်း အကွာအဝေး (Line Spacing):").pack(side=tk.LEFT)
         self.line_height_var = tk.DoubleVar(value=24.0)
-        spacing_spin = ttk.Spinbox(spacing_frame, from_=18.0, to=36.0, increment=1.0, textvariable=self.line_height_var, width=8, command=self.save_config)
-        spacing_spin.bind("<KeyRelease>", lambda e: self.save_config())
-        spacing_spin.pack(side=tk.RIGHT)
-        ttk.Label(spacing_frame, text="pt").pack(side=tk.RIGHT, padx=(0, 5))
+        spin = ttk.Spinbox(row4, from_=18.0, to=36.0, increment=1.0, textvariable=self.line_height_var, width=8, command=self.save_config)
+        spin.bind("<KeyRelease>", lambda e: self.save_config())
+        spin.pack(side=tk.RIGHT)
+        ttk.Label(row4, text="pt").pack(side=tk.RIGHT, padx=(0, 5))
 
-        cal_group = ttk.LabelFrame(control_frame, text="၃။ မျဉ်းပေါ် အတိအကျကျစေရန် ချိန်ညှိခြင်း (Fine-tune Position)", padding="12 12 12 12")
-        cal_group.pack(fill=tk.X, pady=(0, 15))
+        # 3. Calibration Group
+        cal_frame = ttk.LabelFrame(controls_container, text=" ၃။ မျဉ်းပေါ် အတိအကျကျစေရန် ချိန်ညှိခြင်း (Fine-tune Position) ", padding="14 14 14 14")
+        cal_frame.pack(fill=tk.X, pady=(0, 15))
 
-        ttk.Label(cal_group, text="ဘယ်/ညာ ရွှေ့ရန် (Horizontal Offset - X points):").pack(anchor="w", pady=(0, 2))
+        ttk.Label(cal_frame, text="ဘယ်/ညာ ရွှေ့ရန် (Horizontal Offset - X points):").pack(anchor="w", pady=(0, 2))
         self.x_offset_var = tk.DoubleVar(value=0.0)
-        x_slider_frame = ttk.Frame(cal_group)
-        x_slider_frame.pack(fill=tk.X, pady=(0, 10))
+        x_slider_box = ttk.Frame(cal_frame)
+        x_slider_box.pack(fill=tk.X, pady=(0, 12))
         
-        def on_x_slide(v):
-            self.x_val_label.config(text=f"{float(v):+.1f} pt")
-        
-        def on_slide_release(e):
-            self.save_config()
+        def on_x_slide(v): self.x_val_label.config(text=f"{float(v):+.1f} pt")
+        def on_slide_release(e): self.save_config()
             
-        x_scale = ttk.Scale(x_slider_frame, from_=-100.0, to=100.0, variable=self.x_offset_var, command=on_x_slide)
+        x_scale = ttk.Scale(x_slider_box, from_=-100.0, to=100.0, variable=self.x_offset_var, command=on_x_slide)
         x_scale.bind("<ButtonRelease-1>", on_slide_release)
         x_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.x_val_label = ttk.Label(x_slider_frame, text="+0.0 pt", width=8, anchor="e")
-        self.x_val_label.pack(side=tk.RIGHT, padx=(5, 0))
+        self.x_val_label = ttk.Label(x_slider_box, text="+0.0 pt", width=8, anchor="e", font=('Segoe UI', 10, 'bold'), foreground="#2563eb")
+        self.x_val_label.pack(side=tk.RIGHT, padx=(8, 0))
 
-        ttk.Label(cal_group, text="အထက်/အောက် ရွှေ့ရန် (Vertical Offset - Y points):").pack(anchor="w", pady=(0, 2))
+        ttk.Label(cal_frame, text="အထက်/အောက် ရွှေ့ရန် (Vertical Offset - Y points):").pack(anchor="w", pady=(0, 2))
         self.y_offset_var = tk.DoubleVar(value=0.0)
-        y_slider_frame = ttk.Frame(cal_group)
-        y_slider_frame.pack(fill=tk.X, pady=(0, 10))
+        y_slider_box = ttk.Frame(cal_frame)
+        y_slider_box.pack(fill=tk.X, pady=(0, 12))
         
-        def on_y_slide(v):
-            self.y_val_label.config(text=f"{float(v):+.1f} pt")
+        def on_y_slide(v): self.y_val_label.config(text=f"{float(v):+.1f} pt")
             
-        y_scale = ttk.Scale(y_slider_frame, from_=-100.0, to=100.0, variable=self.y_offset_var, command=on_y_slide)
+        y_scale = ttk.Scale(y_slider_box, from_=-100.0, to=100.0, variable=self.y_offset_var, command=on_y_slide)
         y_scale.bind("<ButtonRelease-1>", on_slide_release)
         y_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.y_val_label = ttk.Label(y_slider_frame, text="+0.0 pt", width=8, anchor="e")
-        self.y_val_label.pack(side=tk.RIGHT, padx=(5, 0))
+        self.y_val_label = ttk.Label(y_slider_box, text="+0.0 pt", width=8, anchor="e", font=('Segoe UI', 10, 'bold'), foreground="#2563eb")
+        self.y_val_label.pack(side=tk.RIGHT, padx=(8, 0))
         
-        ttk.Button(cal_group, text="သုညသို့ ပြန်ထားမည် (Reset Offsets)", command=self.reset_offsets).pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(cal_frame, text="သုညသို့ ပြန်ထားမည် (Reset Offsets)", command=self.reset_offsets).pack(fill=tk.X)
 
-        action_group = ttk.LabelFrame(control_frame, text="လုပ်ဆောင်ချက်များ (Actions)", padding="12 12 12 12")
-        action_group.pack(fill=tk.X, expand=True)
+        # 4. Actions Group
+        action_frame = ttk.LabelFrame(controls_container, text=" လုပ်ဆောင်ချက်များ (Actions) ", padding="14 14 14 14")
+        action_frame.pack(fill=tk.X, expand=True)
 
-        generate_btn = ttk.Button(action_group, text="🖨️ ပရင့်ထုတ်မည့် PDF ဖန်တီးမည်\n(Generate Print PDF)", style="Accent.TButton", command=self.generate_cards_action)
-        generate_btn.pack(fill=tk.X, pady=(5, 10))
+        generate_btn = ttk.Button(action_frame, text="🖨️ ပရင့်ထုတ်မည့် PDF ဖန်တီးမည် (Generate Print PDF)", style="Accent.TButton", command=self.generate_cards_action)
+        generate_btn.pack(fill=tk.X, pady=(0, 10))
         
-        open_folder_btn = ttk.Button(action_group, text="📂 ဖိုင်တွဲဖွင့်မည် (Open Output Folder)", command=self.open_output_folder)
-        open_folder_btn.pack(fill=tk.X, pady=5)
+        open_folder_btn = ttk.Button(action_frame, text="📁 ထွက်ပေါ်လာသော ဖိုင်တွဲဖွင့်မည် (Open Output Folder)", command=self.open_output_folder)
+        open_folder_btn.pack(fill=tk.X)
 
-        self.status_var = tk.StringVar(value="အသင့်ဖြစ်ပါပြီ (Ready).")
-        status_bar = ttk.Label(main_container, textvariable=self.status_var, font=('Segoe UI', 10, 'italic'), foreground="#64748b")
-        status_bar.pack(fill=tk.X, pady=(15, 0))
+        # --- Status Bar ---
+        status_box = ttk.Frame(root_container, padding="10 6 10 6", style="Card.TFrame")
+        status_box.pack(fill=tk.X, pady=(15, 0))
+        
+        self.status_var = tk.StringVar(value="🟢 အသင့်ဖြစ်ပါပြီ (Ready).")
+        ttk.Label(status_box, textvariable=self.status_var, font=('Segoe UI', 10), foreground="#334155").pack(side=tk.LEFT)
 
         self.load_config()
 
@@ -559,8 +581,8 @@ class DonationCardGUI:
         self.tree.delete(*self.tree.get_children())
         self.donors_data.clear()
         
-        if hasattr(self, 'excel_label'):
-            self.excel_label.config(text=f"📂 {os.path.basename(self.excel_file)}")
+        if hasattr(self, 'excel_badge'):
+            self.excel_badge.config(text=f"📂 {os.path.basename(self.excel_file)}")
         
         if not os.path.exists(self.excel_file):
             self.status_var.set(f"❌ Excel ဖိုင်မတွေ့ပါ: {self.excel_file}")
@@ -595,6 +617,7 @@ class DonationCardGUI:
                 }
                 self.donors_data.append(donor_obj)
                 
+                tag = 'evenrow' if count % 2 == 0 else 'oddrow'
                 self.tree.insert("", tk.END, values=(
                     "☐ မထုတ်ပါ",
                     to_myanmar_digits(str(int(donor_id) if isinstance(donor_id, (int, float)) and not pd.isna(donor_id) else donor_id)),
@@ -602,7 +625,7 @@ class DonationCardGUI:
                     fmt_amt_num,
                     donor_obj['address'],
                     fmt_date
-                ))
+                ), tags=(tag,))
                 count += 1
                 
             children = self.tree.get_children()
@@ -614,7 +637,7 @@ class DonationCardGUI:
                 self.tree.selection_set(last_item)
                 self.tree.see(last_item)
                 
-            self.status_var.set(f"✅ Excel ဖိုင်မှ အလှူရှင် ({count}) ဦး ဖတ်ပြီးပါပြီ။ (နောက်ဆုံးအလှူရှင်ကိုသာ ရွေးထားပေးပါသည်)")
+            self.status_var.set(f"🟢 Excel ဖိုင်မှ အလှူရှင် ({count}) ဦး ဖတ်ပြီးပါပြီ။ (နောက်ဆုံးအလှူရှင်ကိုသာ ရွေးထားပေးပါသည်)")
         except Exception as e:
             self.status_var.set(f"❌ Excel ဖတ်ရှုရာတွင် ချို့ယွင်းချက်ဖြစ်ပေါ်နေပါသည်: {str(e)}")
             messagebox.showerror("Excel Error", f"Error reading Excel file:\n{str(e)}")
@@ -652,7 +675,7 @@ class DonationCardGUI:
         align_str = self.align_var.get()
         line_height_val = float(self.line_height_var.get())
         
-        self.status_var.set("🖨️ PDF ဖန်တီးနေပါသည်... (Generating OpenType-shaped PDF...)")
+        self.status_var.set("⏳ PDF ဖန်တီးနေပါသည်... (Generating OpenType-shaped PDF...)")
         self.root.update_idletasks()
         
         try:
