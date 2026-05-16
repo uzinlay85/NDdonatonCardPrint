@@ -106,17 +106,18 @@ class PDFCardGenerator:
         self.height = 841.68
         
         self.fields = {
-            'amount_num': {'left': 79.4, 'w': 138.2, 'y': 427.0, 'fs': 14},
-            'amount_let': {'left': 224.4, 'w': 288.2, 'y': 427.0, 'fs': 14},
-            'name_start': {'left': 155.8, 'w': 282.0, 'y': 562.0, 'fs': 14},
-            'address': {'left': 155.5, 'w': 282.6, 'y': 653.0, 'fs': 14},
-            'date': {'left': 436.1, 'w': 114.8, 'y': 777.0, 'fs': 12}
+            'amount_num': {'left': 79.4, 'w': 138.2, 'y': 427.0},
+            'amount_let': {'left': 224.4, 'w': 288.2, 'y': 427.0},
+            'name_start': {'left': 155.8, 'w': 282.0, 'y': 562.0},
+            'address': {'left': 155.5, 'w': 282.6, 'y': 653.0},
+            'date': {'left': 436.1, 'w': 114.8, 'y': 777.0}
         }
 
     def generate_pdf(self, donors: list, output_pdf: str, mode: str = "overlay", 
                      offset_x: float = 0.0, offset_y: float = 0.0, 
                      line_height: float = 24.0, color_hex: str = "#0066cc",
-                     align: str = "center"):
+                     align: str = "center", base_font_size: float = 14.0,
+                     font_weight: str = "normal"):
         browser_exe = find_chromium_browser()
         if not browser_exe:
             raise RuntimeError("Microsoft Edge သို့မဟုတ် Google Chrome ဘရောက်ဆာကို စက်ထဲတွင် ရှာမတွေ့ပါ။ (Browser required for OpenType font shaping)")
@@ -143,8 +144,11 @@ class PDFCardGenerator:
                 left_pos = round(f_info['left'] + offset_x, 2)
                 top_pos = round((custom_y if custom_y is not None else f_info['y']) + offset_y, 2)
                 width_pos = f_info['w']
-                fs = f_info['fs']
-                return f"<div class='txt' style='top: {top_pos}pt; left: {left_pos}pt; width: {width_pos}pt; font-size: {fs}pt; text-align: {align};'>{text_str}</div>"
+                
+                # Scale date proportionally (date is normally 12pt when base is 14pt)
+                fs = base_font_size if field_key != 'date' else round(base_font_size * (12.0 / 14.0), 1)
+                
+                return f"<div class='txt' style='top: {top_pos}pt; left: {left_pos}pt; width: {width_pos}pt; font-size: {fs}pt; text-align: {align}; font-weight: {font_weight};'>{text_str}</div>"
 
             items = []
             items.append(get_field_div(donor['formatted_amount_num'], 'amount_num'))
@@ -170,7 +174,7 @@ class PDFCardGenerator:
 @font-face {{ font-family: 'PrinterFont'; src: url('{font_url}'); }}
 body {{ margin: 0; padding: 0; font-family: 'PrinterFont', sans-serif; box-sizing: border-box; }}
 .page {{ width: 595.44pt; height: 841.68pt; position: relative; page-break-after: always; background: white; overflow: hidden; }}
-.txt {{ position: absolute; color: {color_hex}; z-index: 2; line-height: 1.2; white-space: nowrap; font-weight: normal; }}
+.txt {{ position: absolute; color: {color_hex}; z-index: 2; line-height: 1.2; white-space: nowrap; }}
 </style>
 </head>
 <body>
@@ -343,6 +347,9 @@ class DonationCardGUI:
                 if 'output_mode' in cfg: self.output_mode.set(cfg['output_mode'])
                 if 'align' in cfg: self.align_var.set(cfg['align'])
                 if 'color_name' in cfg: self.color_cbb.set(cfg['color_name'])
+                if 'font_size' in cfg: self.font_size_var.set(float(cfg['font_size']))
+                if 'font_weight' in cfg:
+                    self.weight_cbb.set("စာလုံးမည်း (Bold)" if cfg['font_weight'] == 'bold' else "ပုံမှန် (Normal)")
                 if 'font_name' in cfg:
                     fn = cfg['font_name']
                     if fn in self.fonts_map or fn == "KoZ 008 Uni Regular (Default)":
@@ -366,6 +373,8 @@ class DonationCardGUI:
             'align': self.align_var.get(),
             'color_name': self.color_cbb.get(),
             'font_name': self.font_cbb.get(),
+            'font_size': float(self.font_size_var.get()),
+            'font_weight': "bold" if "Bold" in self.weight_cbb.get() or "မည်း" in self.weight_cbb.get() else "normal",
             'excel_file': self.excel_file
         }
         fn = self.font_cbb.get()
@@ -470,31 +479,45 @@ class DonationCardGUI:
         self.font_cbb.set("KoZ 008 Uni Regular (Default)")
         self.font_cbb.bind("<<ComboboxSelected>>", lambda e: self.save_config())
         self.font_cbb.pack(side=tk.RIGHT, fill=tk.X, expand=True)
-        
+
         row2 = ttk.Frame(style_frame)
         row2.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(row2, text="စာသားအရောင် (Color):").pack(side=tk.LEFT)
-        self.color_cbb = ttk.Combobox(row2, values=list(self.colors_map.keys()), state="readonly", width=25)
+        ttk.Label(row2, text="စာလုံးအရွယ် (Size):").pack(side=tk.LEFT)
+        self.font_size_var = tk.DoubleVar(value=14.0)
+        size_spin = ttk.Spinbox(row2, from_=10.0, to=28.0, increment=1.0, textvariable=self.font_size_var, width=6, command=self.save_config)
+        size_spin.bind("<KeyRelease>", lambda e: self.save_config())
+        size_spin.pack(side=tk.LEFT, padx=(5, 15))
+        
+        ttk.Label(row2, text="အထူအပါး (Weight):").pack(side=tk.LEFT)
+        self.weight_cbb = ttk.Combobox(row2, values=["ပုံမှန် (Normal)", "စာလုံးမည်း (Bold)"], state="readonly", width=18)
+        self.weight_cbb.set("ပုံမှန် (Normal)")
+        self.weight_cbb.bind("<<ComboboxSelected>>", lambda e: self.save_config())
+        self.weight_cbb.pack(side=tk.LEFT, padx=(5, 0))
+        
+        row3 = ttk.Frame(style_frame)
+        row3.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(row3, text="စာသားအရောင် (Color):").pack(side=tk.LEFT)
+        self.color_cbb = ttk.Combobox(row3, values=list(self.colors_map.keys()), state="readonly", width=25)
         self.color_cbb.set("အပြာရင့် (Royal Blue)")
         self.color_cbb.bind("<<ComboboxSelected>>", lambda e: self.save_config())
         self.color_cbb.pack(side=tk.RIGHT)
         
-        row3 = ttk.Frame(style_frame)
-        row3.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(row3, text="စာသားနေရာ (Alignment):").pack(side=tk.LEFT)
+        row4 = ttk.Frame(style_frame)
+        row4.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(row4, text="စာသားနေရာ (Alignment):").pack(side=tk.LEFT)
         self.align_var = tk.StringVar(value="center")
         self.align_var.trace_add("write", lambda *a: self.save_config())
-        ttk.Radiobutton(row3, text="မျဉ်းအလယ် (Center)", variable=self.align_var, value="center").pack(side=tk.RIGHT, padx=(10, 0))
-        ttk.Radiobutton(row3, text="ဘယ်ကပ် (Left)", variable=self.align_var, value="left").pack(side=tk.RIGHT)
+        ttk.Radiobutton(row4, text="မျဉ်းအလယ် (Center)", variable=self.align_var, value="center").pack(side=tk.RIGHT, padx=(10, 0))
+        ttk.Radiobutton(row4, text="ဘယ်ကပ် (Left)", variable=self.align_var, value="left").pack(side=tk.RIGHT)
         
-        row4 = ttk.Frame(style_frame)
-        row4.pack(fill=tk.X)
-        ttk.Label(row4, text="စာကြောင်း(၂)ကြောင်း အကွာအဝေး (Line Spacing):").pack(side=tk.LEFT)
+        row5 = ttk.Frame(style_frame)
+        row5.pack(fill=tk.X)
+        ttk.Label(row5, text="စာကြောင်း(၂)ကြောင်း အကွာအဝေး (Line Spacing):").pack(side=tk.LEFT)
         self.line_height_var = tk.DoubleVar(value=24.0)
-        spin = ttk.Spinbox(row4, from_=18.0, to=36.0, increment=1.0, textvariable=self.line_height_var, width=8, command=self.save_config)
+        spin = ttk.Spinbox(row5, from_=18.0, to=36.0, increment=1.0, textvariable=self.line_height_var, width=8, command=self.save_config)
         spin.bind("<KeyRelease>", lambda e: self.save_config())
         spin.pack(side=tk.RIGHT)
-        ttk.Label(row4, text="pt").pack(side=tk.RIGHT, padx=(0, 5))
+        ttk.Label(row5, text="pt").pack(side=tk.RIGHT, padx=(0, 5))
 
         # 3. Calibration Group
         cal_frame = ttk.LabelFrame(controls_container, text=" ၃။ မျဉ်းပေါ် အတိအကျကျစေရန် ချိန်ညှိခြင်း (Fine-tune Position) ", padding="14 14 14 14")
@@ -674,6 +697,8 @@ class DonationCardGUI:
         hex_color = self.colors_map.get(selected_color_name, "#0066cc")
         align_str = self.align_var.get()
         line_height_val = float(self.line_height_var.get())
+        font_size_val = float(self.font_size_var.get())
+        weight_str = "bold" if "Bold" in self.weight_cbb.get() or "မည်း" in self.weight_cbb.get() else "normal"
         
         self.status_var.set("⏳ PDF ဖန်တီးနေပါသည်... (Generating OpenType-shaped PDF...)")
         self.root.update_idletasks()
@@ -687,7 +712,9 @@ class DonationCardGUI:
                 offset_y=self.y_offset_var.get(),
                 line_height=line_height_val,
                 color_hex=hex_color,
-                align=align_str
+                align=align_str,
+                base_font_size=font_size_val,
+                font_weight=weight_str
             )
             self.status_var.set(f"🎉 အောင်မြင်ပါသည်။ ဖိုင်ကိုသိမ်းဆည်းလိုက်ပါပြီ: {output_filename}")
             
