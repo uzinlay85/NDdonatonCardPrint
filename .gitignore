@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+~$*.xlsx
+~*.html
+DonationCards_*.pdf
+printer_config.json
+ND_filled_*.docx
+ND_filled_*.pdf
+ND_filled_*.jpg

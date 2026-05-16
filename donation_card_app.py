@@ -1,0 +1,686 @@
+import os
+import sys
+import json
+import math
+import time
+import shutil
+import subprocess
+import webbrowser
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import pandas as pd
+import fitz  # PyMuPDF
+from PIL import Image, ImageTk
+
+# --- Helper Functions for Myanmar Formatting & Typography ---
+
+MYANMAR_DIGITS = {'0': '၀', '1': '၁', '2': '၂', '3': '၃', '4': '၄', '5': '၅', '6': '၆', '7': '၇', '8': '၈', '9': '၉'}
+
+def to_myanmar_digits(text: str) -> str:
+    """Converts Western digits (0-9) in a string to Myanmar numerals (၀-၉)."""
+    if pd.isna(text) or text is None:
+        return ""
+    text_str = str(text)
+    for eng, mm in MYANMAR_DIGITS.items():
+        text_str = text_str.replace(eng, mm)
+    return text_str
+
+def format_currency_number(amount: any, suffix: str = "  - ကျပ်") -> str:
+    """Formats numeric amount with commas and Myanmar digits."""
+    if pd.isna(amount) or amount is None or str(amount).strip() == "":
+        return ""
+    try:
+        num = float(amount)
+        if num.is_integer():
+            formatted_num = f"{int(num):,}"
+        else:
+            formatted_num = f"{num:,.2f}"
+    except (ValueError, TypeError):
+        formatted_num = str(amount)
+    
+    mm_num = to_myanmar_digits(formatted_num)
+    if suffix and not pd.isna(suffix):
+        return f"{mm_num}{suffix}"
+    return mm_num
+
+def wrap_myanmar_text(text: str, max_chars: int = 40) -> list:
+    """Wraps Myanmar text into multiple lines."""
+    if pd.isna(text) or text is None or str(text).strip() == "":
+        return [""]
+    text_str = str(text).strip()
+    if "\n" in text_str or "\\n" in text_str:
+        raw_lines = text_str.replace("\\n", "\n").split("\n")
+        final_lines = []
+        for line in raw_lines:
+            final_lines.extend(wrap_single_line(line, max_chars))
+        return final_lines
+    else:
+        return wrap_single_line(text_str, max_chars)
+
+def wrap_single_line(line: str, max_chars: int) -> list:
+    line = line.strip()
+    if len(line) <= max_chars:
+        return [line]
+    words = line.split(" ")
+    if len(words) == 1:
+        return [line[i:i+max_chars] for i in range(0, len(line), max_chars)]
+    chunks = []
+    current_chunk = []
+    current_len = 0
+    for word in words:
+        if current_len + len(word) + 1 > max_chars and current_chunk:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = [word]
+            current_len = len(word)
+        else:
+            current_chunk.append(word)
+            current_len += len(word) + 1
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+    return chunks
+
+def find_chromium_browser():
+    """Locates Microsoft Edge or Google Chrome executable on Windows."""
+    candidates = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    for name in ['msedge', 'chrome']:
+        p = shutil.which(name)
+        if p: return p
+    return None
+
+
+# --- Advanced HTML/CSS to PDF Card Generator (Flawless OpenType Shaping) ---
+
+class PDFCardGenerator:
+    def __init__(self, font_path: str, bg_image_path: str = None):
+        self.font_path = font_path
+        self.bg_image_path = bg_image_path
+        self.width = 595.44
+        self.height = 841.68
+        
+        self.fields = {
+            'amount_num': {'left': 79.4, 'w': 138.2, 'y': 427.0, 'fs': 14},
+            'amount_let': {'left': 224.4, 'w': 288.2, 'y': 427.0, 'fs': 14},
+            'name_start': {'left': 155.8, 'w': 282.0, 'y': 562.0, 'fs': 14},
+            'address': {'left': 155.5, 'w': 282.6, 'y': 653.0, 'fs': 14},
+            'date': {'left': 436.1, 'w': 114.8, 'y': 777.0, 'fs': 12}
+        }
+
+    def generate_pdf(self, donors: list, output_pdf: str, mode: str = "overlay", 
+                     offset_x: float = 0.0, offset_y: float = 0.0, 
+                     line_height: float = 24.0, color_hex: str = "#0066cc",
+                     align: str = "center"):
+        browser_exe = find_chromium_browser()
+        if not browser_exe:
+            raise RuntimeError("Microsoft Edge သို့မဟုတ် Google Chrome ဘရောက်ဆာကို စက်ထဲတွင် ရှာမတွေ့ပါ။ (Browser required for OpenType font shaping)")
+
+        abs_font_path = os.path.abspath(self.font_path).replace('\\', '/')
+        if not abs_font_path.startswith('/'):
+            abs_font_path = '/' + abs_font_path
+        font_url = f"file://{abs_font_path}"
+
+        abs_bg_path = os.path.abspath(self.bg_image_path).replace('\\', '/') if self.bg_image_path else ""
+        if abs_bg_path and not abs_bg_path.startswith('/'):
+            abs_bg_path = '/' + abs_bg_path
+        bg_url = f"file://{abs_bg_path}" if abs_bg_path else ""
+        
+        pages_html = []
+        for donor in donors:
+            bg_html = ""
+            if mode == "full" and bg_url and os.path.exists(self.bg_image_path):
+                bg_html = f"<img src='{bg_url}' style='position: absolute; top:0; left:0; width: 595.44pt; height: 841.68pt; z-index: 1;' />"
+            
+            def get_field_div(text_str: str, field_key: str, custom_y: float = None):
+                if not text_str or str(text_str).strip() == "": return ""
+                f_info = self.fields[field_key]
+                left_pos = round(f_info['left'] + offset_x, 2)
+                top_pos = round((custom_y if custom_y is not None else f_info['y']) + offset_y, 2)
+                width_pos = f_info['w']
+                fs = f_info['fs']
+                return f"<div class='txt' style='top: {top_pos}pt; left: {left_pos}pt; width: {width_pos}pt; font-size: {fs}pt; text-align: {align};'>{text_str}</div>"
+
+            items = []
+            items.append(get_field_div(donor['formatted_amount_num'], 'amount_num'))
+            items.append(get_field_div(donor['formatted_amount_let'], 'amount_let'))
+            
+            name_lines = wrap_myanmar_text(donor['donater_name'], max_chars=40)
+            for idx, line in enumerate(name_lines[:2]):
+                curr_y = self.fields['name_start']['y'] + (idx * line_height)
+                items.append(get_field_div(line, 'name_start', custom_y=curr_y))
+                
+            items.append(get_field_div(donor['address'], 'address'))
+            items.append(get_field_div(donor['formatted_date'], 'date'))
+            
+            page_content = f"<div class='page'>{bg_html}{''.join(items)}</div>"
+            pages_html.append(page_content)
+            
+        full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset='utf-8'>
+<style>
+@page {{ size: A4; margin: 0; }}
+@font-face {{ font-family: 'PrinterFont'; src: url('{font_url}'); }}
+body {{ margin: 0; padding: 0; font-family: 'PrinterFont', sans-serif; box-sizing: border-box; }}
+.page {{ width: 595.44pt; height: 841.68pt; position: relative; page-break-after: always; background: white; overflow: hidden; }}
+.txt {{ position: absolute; color: {color_hex}; z-index: 2; line-height: 1.2; white-space: nowrap; font-weight: normal; }}
+</style>
+</head>
+<body>
+{''.join(pages_html)}
+</body>
+</html>"""
+
+        temp_html = os.path.join(os.path.dirname(output_pdf), "~temp_print.html")
+        abs_output_pdf = os.path.abspath(output_pdf)
+        
+        try:
+            with open(temp_html, 'w', encoding='utf-8') as f:
+                f.write(full_html)
+                
+            cmd = [
+                browser_exe,
+                '--headless',
+                '--disable-gpu',
+                '--no-pdf-header-footer',
+                f'--print-to-pdf={abs_output_pdf}',
+                os.path.abspath(temp_html)
+            ]
+            
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if not os.path.exists(abs_output_pdf):
+                raise RuntimeError(f"PDF ဖန်တီးမှု မအောင်မြင်ပါ: {res.stderr}")
+        finally:
+            if os.path.exists(temp_html):
+                try: os.remove(temp_html)
+                except Exception: pass
+
+
+# --- Tkinter Desktop GUI Application ---
+
+class DonationCardGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("မြန်မာ အလှူခံကတ် ပရင့်ထုတ်စနစ် (Myanmar Donation Card Printer)")
+        self.root.geometry("1200x780")
+        self.root.minsize(980, 680)
+        
+        self.style = ttk.Style()
+        self.style.theme_use('clam')
+        self.style.configure('TFrame', background='#f8fafc')
+        self.style.configure('TLabel', background='#f8fafc', font=('Segoe UI', 10), foreground='#334155')
+        self.style.configure('Header.TLabel', font=('Segoe UI', 16, 'bold'), foreground='#0f172a')
+        self.style.configure('TButton', font=('Segoe UI', 10, 'bold'), padding=6)
+        self.style.configure('Accent.TButton', font=('Segoe UI', 11, 'bold'), padding=10, background='#2563eb', foreground='white')
+        self.style.map('Accent.TButton', background=[('active', '#1d4ed8')])
+        self.style.configure('TLabelframe', background='#f8fafc', font=('Segoe UI', 11, 'bold'), foreground='#1e293b')
+        self.style.configure('TLabelframe.Label', font=('Segoe UI', 11, 'bold'), foreground='#1e293b')
+        
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.default_excel_file = os.path.join(self.base_dir, "DonorsData.xlsx")
+        self.excel_file = self.default_excel_file
+        self.default_font_file = os.path.join(self.base_dir, "KoZ 008 Font", "008.ttf")
+        self.template_file = os.path.join(self.base_dir, "blank_card_template.jpg")
+        self.config_file = os.path.join(self.base_dir, "printer_config.json")
+        
+        self.donors_data = []
+        self.generator = PDFCardGenerator(self.default_font_file, self.template_file)
+        
+        self.fonts_map = self.get_available_fonts()
+        
+        self.colors_map = {
+            "အပြာရင့် (Royal Blue)": "#0066cc",
+            "အပြာတောက်တောက် (Electric Blue)": "#007aff",
+            "အပြာမှိုင်း (Deep Navy Blue)": "#1e3a8a",
+            "အနက်ရောင် (Standard Black)": "#000000",
+            "အနီရောင် (Dark Red)": "#b91c1c",
+            "အစိမ်းရောင် (Forest Green)": "#15803d",
+            "ရွှေအိုရောင် (Antique Gold)": "#b45309"
+        }
+        
+        # Load config first to restore saved excel file if any
+        self.load_config_initial()
+        
+        self._build_ui()
+        self.load_excel_data()
+        
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def load_config_initial(self):
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                if 'excel_file' in cfg and os.path.exists(cfg['excel_file']):
+                    self.excel_file = cfg['excel_file']
+            except Exception: pass
+
+    def get_available_fonts(self):
+        fonts_dict = {
+            "KoZ 008 Uni Regular (Default)": self.default_font_file
+        }
+        win_fonts_dir = r"C:\Windows\Fonts"
+        if os.path.exists(win_fonts_dir):
+            prio_fonts = [
+                ("Pyidaungsu Regular", "Pyidaungsu-2.5.3_Regular.ttf"),
+                ("Pyidaungsu Bold", "Pyidaungsu-2.5.3_Bold.ttf"),
+                ("Myanmar Text Regular", "mmrtext.ttf"),
+                ("Myanmar Text Bold", "mmrtextb.ttf"),
+            ]
+            for name, fn in prio_fonts:
+                path = os.path.join(win_fonts_dir, fn)
+                if os.path.exists(path):
+                    fonts_dict[name] = path
+            try:
+                for f in sorted(os.listdir(win_fonts_dir)):
+                    if f.lower().endswith(('.ttf', '.otf')):
+                        path = os.path.join(win_fonts_dir, f)
+                        fname = os.path.splitext(f)[0]
+                        if fname not in [p[1].split('.')[0] for p in prio_fonts] and f != "008.ttf":
+                            fonts_dict[f"Windows: {fname}"] = path
+            except Exception: pass
+        return fonts_dict
+
+    def browse_custom_font(self):
+        path = filedialog.askopenfilename(
+            title="ဖောင့်ဖိုင် ရွေးချယ်ပါ (Select Font File)",
+            filetypes=[("Font Files", "*.ttf *.otf")]
+        )
+        if path and os.path.exists(path):
+            basename = os.path.basename(path)
+            display_name = f"Custom: {basename}"
+            self.fonts_map[display_name] = path
+            self.font_cbb.config(values=list(self.fonts_map.keys()))
+            self.font_cbb.set(display_name)
+            self.save_config()
+            self.status_var.set(f"✅ ဖောင့်အသစ် ရွေးချယ်ပြီးပါပြီ: {basename}")
+
+    def browse_excel_file(self):
+        path = filedialog.askopenfilename(
+            title="အလှူရှင်စာရင်း Excel ဖိုင် ရွေးချယ်ပါ (Select Donors Excel File)",
+            filetypes=[("Excel Files", "*.xlsx *.xls")]
+        )
+        if path and os.path.exists(path):
+            self.excel_file = path
+            self.save_config()
+            self.load_excel_data()
+            self.status_var.set(f"📂 Excel ဖိုင်အသစ် ဖွင့်လိုက်ပါပြီ: {os.path.basename(path)}")
+
+    def load_config(self):
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                if 'x_offset' in cfg: self.x_offset_var.set(float(cfg['x_offset']))
+                if 'y_offset' in cfg: self.y_offset_var.set(float(cfg['y_offset']))
+                if 'line_height' in cfg: self.line_height_var.set(float(cfg['line_height']))
+                if 'output_mode' in cfg: self.output_mode.set(cfg['output_mode'])
+                if 'align' in cfg: self.align_var.set(cfg['align'])
+                if 'color_name' in cfg: self.color_cbb.set(cfg['color_name'])
+                if 'font_name' in cfg:
+                    fn = cfg['font_name']
+                    if fn in self.fonts_map or fn == "KoZ 008 Uni Regular (Default)":
+                        self.font_cbb.set(fn)
+                    elif 'custom_font_path' in cfg and os.path.exists(cfg['custom_font_path']):
+                        self.fonts_map[fn] = cfg['custom_font_path']
+                        self.font_cbb.config(values=list(self.fonts_map.keys()))
+                        self.font_cbb.set(fn)
+                        
+                self.x_val_label.config(text=f"{self.x_offset_var.get():+.1f} pt")
+                self.y_val_label.config(text=f"{self.y_offset_var.get():+.1f} pt")
+                self.status_var.set("⚙️ ယခင်သတ်မှတ်ထားသော ချိန်ညှိမှု (Saved Settings) ကို ဖွင့်ပေးထားပါသည်။")
+            except Exception: pass
+
+    def save_config(self):
+        cfg = {
+            'x_offset': self.x_offset_var.get(),
+            'y_offset': self.y_offset_var.get(),
+            'line_height': self.line_height_var.get(),
+            'output_mode': self.output_mode.get(),
+            'align': self.align_var.get(),
+            'color_name': self.color_cbb.get(),
+            'font_name': self.font_cbb.get(),
+            'excel_file': self.excel_file
+        }
+        fn = self.font_cbb.get()
+        if fn in self.fonts_map:
+            cfg['custom_font_path'] = self.fonts_map[fn]
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=4)
+        except Exception: pass
+
+    def on_closing(self):
+        self.save_config()
+        self.root.destroy()
+
+    def _build_ui(self):
+        main_container = ttk.Frame(self.root, padding="15 15 15 15")
+        main_container.pack(fill=tk.BOTH, expand=True)
+
+        header_frame = ttk.Frame(main_container)
+        header_frame.pack(fill=tk.X, pady=(0, 15))
+        title_label = ttk.Label(header_frame, text="အလှူရှင် အချက်အလက်များနှင့် ပရင့်ထုတ်စနစ် (Donation Card Printing System)", style='Header.TLabel')
+        title_label.pack(side=tk.LEFT)
+        
+        # Header Buttons
+        btn_frame = ttk.Frame(header_frame)
+        btn_frame.pack(side=tk.RIGHT)
+        
+        browse_excel_btn = ttk.Button(btn_frame, text="📂 Excel ဖိုင်ရွေးမည် (Select File)", command=self.browse_excel_file)
+        browse_excel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        reload_btn = ttk.Button(btn_frame, text="🔄 လက်ရှိဖိုင်ပြန်ဖွင့်မည် (Reload)", command=self.load_excel_data)
+        reload_btn.pack(side=tk.LEFT)
+
+        content_frame = ttk.Frame(main_container)
+        content_frame.pack(fill=tk.BOTH, expand=True)
+        content_frame.columnconfigure(0, weight=3)
+        content_frame.columnconfigure(1, weight=2)
+
+        table_frame = ttk.LabelFrame(content_frame, text="အလှူရှင် စာရင်း (Donors List from Excel)", padding="10 10 10 10")
+        table_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        select_bar = ttk.Frame(table_frame)
+        select_bar.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(select_bar, text="☑ အားလုံးရွေးမည် (Select All)", command=self.select_all).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(select_bar, text="☐ ရွေးချယ်မှုဖြုတ်မည် (Deselect All)", command=self.deselect_all).pack(side=tk.LEFT)
+        
+        self.excel_label = ttk.Label(select_bar, text=f"📂 {os.path.basename(self.excel_file)}", font=('Segoe UI', 10, 'bold'), foreground="#2563eb")
+        self.excel_label.pack(side=tk.RIGHT, padx=(0, 5))
+
+        columns = ("selected", "id", "name", "amount", "address", "date")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        
+        self.tree.heading("selected", text="ပရင့်ထုတ်မည်")
+        self.tree.heading("id", text="စဉ် (ID)")
+        self.tree.heading("name", text="အလှူရှင်အမည် (Name)")
+        self.tree.heading("amount", text="လှူဒါန်းငွေ (Amount)")
+        self.tree.heading("address", text="နေရပ်လိပ်စာ (Address)")
+        self.tree.heading("date", text="ရက်စွဲ (Date)")
+        
+        self.tree.column("selected", width=90, anchor="center")
+        self.tree.column("id", width=60, anchor="center")
+        self.tree.column("name", width=250, anchor="w")
+        self.tree.column("amount", width=140, anchor="e")
+        self.tree.column("address", width=180, anchor="w")
+        self.tree.column("date", width=100, anchor="center")
+        
+        self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
+        
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscroll=scrollbar.set)
+        
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        control_frame = ttk.Frame(content_frame)
+        control_frame.grid(row=0, column=1, sticky="nsew")
+
+        mode_group = ttk.LabelFrame(control_frame, text="၁။ ပရင့်မုဒ် ရွေးချယ်ခြင်း (Output Mode)", padding="12 12 12 12")
+        mode_group.pack(fill=tk.X, pady=(0, 10))
+
+        self.output_mode = tk.StringVar(value="overlay")
+        self.output_mode.trace_add("write", lambda *a: self.save_config())
+        rb_overlay = ttk.Radiobutton(mode_group, text="ကတ်အလွတ်ပေါ်ထပ်ရိုက်မည် (Print Overlay)\n* အသင့်ရှိသော ကတ်အလွတ်များအတွက်", variable=self.output_mode, value="overlay")
+        rb_overlay.pack(anchor="w", pady=5)
+        
+        rb_full = ttk.Radiobutton(mode_group, text="ဒီဇိုင်းနောက်ခံပါ ပရင့်ထုတ်မည် (Full Certificate)\n* ဒီဂျစ်တယ်ကတ် သို့မဟုတ် စစ်ဆေးရန်", variable=self.output_mode, value="full")
+        rb_full.pack(anchor="w", pady=5)
+
+        type_group = ttk.LabelFrame(control_frame, text="၂။ ဖောင့်နှင့် စာသား နေရာချထားမှု (Typography & Style)", padding="12 12 12 12")
+        type_group.pack(fill=tk.X, pady=(0, 10))
+        
+        font_frame = ttk.Frame(type_group)
+        font_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(font_frame, text="စာသား ဖောင့် (Font):").pack(side=tk.LEFT)
+        browse_font_btn = ttk.Button(font_frame, text="📂 ဖိုင်ရွေးမည် (Browse)", command=self.browse_custom_font, padding=2)
+        browse_font_btn.pack(side=tk.RIGHT, padx=(5, 0))
+        self.font_cbb = ttk.Combobox(font_frame, values=list(self.fonts_map.keys()), state="readonly", width=22)
+        self.font_cbb.set("KoZ 008 Uni Regular (Default)")
+        self.font_cbb.bind("<<ComboboxSelected>>", lambda e: self.save_config())
+        self.font_cbb.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        
+        color_frame = ttk.Frame(type_group)
+        color_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(color_frame, text="စာသားအရောင် (Color):").pack(side=tk.LEFT)
+        self.color_cbb = ttk.Combobox(color_frame, values=list(self.colors_map.keys()), state="readonly", width=25)
+        self.color_cbb.set("အပြာရင့် (Royal Blue)")
+        self.color_cbb.bind("<<ComboboxSelected>>", lambda e: self.save_config())
+        self.color_cbb.pack(side=tk.RIGHT)
+        
+        align_frame = ttk.Frame(type_group)
+        align_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(align_frame, text="စာသားနေရာ (Alignment):").pack(side=tk.LEFT)
+        self.align_var = tk.StringVar(value="center")
+        self.align_var.trace_add("write", lambda *a: self.save_config())
+        rb_center = ttk.Radiobutton(align_frame, text="မျဉ်းအလယ် (Center)", variable=self.align_var, value="center")
+        rb_center.pack(side=tk.RIGHT, padx=(5, 0))
+        rb_left = ttk.Radiobutton(align_frame, text="ဘယ်ကပ် (Left)", variable=self.align_var, value="left")
+        rb_left.pack(side=tk.RIGHT)
+        
+        spacing_frame = ttk.Frame(type_group)
+        spacing_frame.pack(fill=tk.X)
+        ttk.Label(spacing_frame, text="စာကြောင်း(၂)ကြောင်း အကွာအဝေး (Line Spacing):").pack(side=tk.LEFT)
+        self.line_height_var = tk.DoubleVar(value=24.0)
+        spacing_spin = ttk.Spinbox(spacing_frame, from_=18.0, to=36.0, increment=1.0, textvariable=self.line_height_var, width=8, command=self.save_config)
+        spacing_spin.bind("<KeyRelease>", lambda e: self.save_config())
+        spacing_spin.pack(side=tk.RIGHT)
+        ttk.Label(spacing_frame, text="pt").pack(side=tk.RIGHT, padx=(0, 5))
+
+        cal_group = ttk.LabelFrame(control_frame, text="၃။ မျဉ်းပေါ် အတိအကျကျစေရန် ချိန်ညှိခြင်း (Fine-tune Position)", padding="12 12 12 12")
+        cal_group.pack(fill=tk.X, pady=(0, 15))
+
+        ttk.Label(cal_group, text="ဘယ်/ညာ ရွှေ့ရန် (Horizontal Offset - X points):").pack(anchor="w", pady=(0, 2))
+        self.x_offset_var = tk.DoubleVar(value=0.0)
+        x_slider_frame = ttk.Frame(cal_group)
+        x_slider_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        def on_x_slide(v):
+            self.x_val_label.config(text=f"{float(v):+.1f} pt")
+        
+        def on_slide_release(e):
+            self.save_config()
+            
+        x_scale = ttk.Scale(x_slider_frame, from_=-100.0, to=100.0, variable=self.x_offset_var, command=on_x_slide)
+        x_scale.bind("<ButtonRelease-1>", on_slide_release)
+        x_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.x_val_label = ttk.Label(x_slider_frame, text="+0.0 pt", width=8, anchor="e")
+        self.x_val_label.pack(side=tk.RIGHT, padx=(5, 0))
+
+        ttk.Label(cal_group, text="အထက်/အောက် ရွှေ့ရန် (Vertical Offset - Y points):").pack(anchor="w", pady=(0, 2))
+        self.y_offset_var = tk.DoubleVar(value=0.0)
+        y_slider_frame = ttk.Frame(cal_group)
+        y_slider_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        def on_y_slide(v):
+            self.y_val_label.config(text=f"{float(v):+.1f} pt")
+            
+        y_scale = ttk.Scale(y_slider_frame, from_=-100.0, to=100.0, variable=self.y_offset_var, command=on_y_slide)
+        y_scale.bind("<ButtonRelease-1>", on_slide_release)
+        y_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.y_val_label = ttk.Label(y_slider_frame, text="+0.0 pt", width=8, anchor="e")
+        self.y_val_label.pack(side=tk.RIGHT, padx=(5, 0))
+        
+        ttk.Button(cal_group, text="သုညသို့ ပြန်ထားမည် (Reset Offsets)", command=self.reset_offsets).pack(fill=tk.X, pady=(5, 0))
+
+        action_group = ttk.LabelFrame(control_frame, text="လုပ်ဆောင်ချက်များ (Actions)", padding="12 12 12 12")
+        action_group.pack(fill=tk.X, expand=True)
+
+        generate_btn = ttk.Button(action_group, text="🖨️ ပရင့်ထုတ်မည့် PDF ဖန်တီးမည်\n(Generate Print PDF)", style="Accent.TButton", command=self.generate_cards_action)
+        generate_btn.pack(fill=tk.X, pady=(5, 10))
+        
+        open_folder_btn = ttk.Button(action_group, text="📂 ဖိုင်တွဲဖွင့်မည် (Open Output Folder)", command=self.open_output_folder)
+        open_folder_btn.pack(fill=tk.X, pady=5)
+
+        self.status_var = tk.StringVar(value="အသင့်ဖြစ်ပါပြီ (Ready).")
+        status_bar = ttk.Label(main_container, textvariable=self.status_var, font=('Segoe UI', 10, 'italic'), foreground="#64748b")
+        status_bar.pack(fill=tk.X, pady=(15, 0))
+
+        self.load_config()
+
+    def on_tree_click(self, event):
+        region = self.tree.identify("item", event.x, event.y)
+        if region:
+            col = self.tree.identify_column(event.x)
+            if col == "#1":
+                item = self.tree.focus()
+                vals = list(self.tree.item(item, "values"))
+                vals[0] = "☐ မထုတ်ပါ" if vals[0].startswith("☑") else "☑ ထုတ်မည်"
+                self.tree.item(item, values=vals)
+
+    def select_all(self):
+        for item in self.tree.get_children():
+            vals = list(self.tree.item(item, "values"))
+            vals[0] = "☑ ထုတ်မည်"
+            self.tree.item(item, values=vals)
+
+    def deselect_all(self):
+        for item in self.tree.get_children():
+            vals = list(self.tree.item(item, "values"))
+            vals[0] = "☐ မထုတ်ပါ"
+            self.tree.item(item, values=vals)
+
+    def reset_offsets(self):
+        self.x_offset_var.set(0.0)
+        self.y_offset_var.set(0.0)
+        self.x_val_label.config(text="+0.0 pt")
+        self.y_val_label.config(text="+0.0 pt")
+        self.save_config()
+
+    def load_excel_data(self):
+        self.tree.delete(*self.tree.get_children())
+        self.donors_data.clear()
+        
+        if hasattr(self, 'excel_label'):
+            self.excel_label.config(text=f"📂 {os.path.basename(self.excel_file)}")
+        
+        if not os.path.exists(self.excel_file):
+            self.status_var.set(f"❌ Excel ဖိုင်မတွေ့ပါ: {self.excel_file}")
+            messagebox.showerror("Error", f"Excel file not found at:\n{self.excel_file}")
+            return
+
+        try:
+            df = pd.read_excel(self.excel_file)
+            count = 0
+            for idx, row in df.iterrows():
+                if pd.isna(row.get('ID')) or str(row.get('ID')).strip() == "":
+                    continue
+                
+                donor_id = row['ID']
+                amt_num = row.get('Amount_Num', '')
+                amt_suffix = row.get('2-num', '  - ကျပ်')
+                amt_let = row.get('Amount_Let', '')
+                name = row.get('Donater_Name', '')
+                addr = row.get('Address', '')
+                raw_date = row.get('Date', '')
+                
+                fmt_amt_num = format_currency_number(amt_num, amt_suffix)
+                fmt_date = to_myanmar_digits(str(raw_date)) if not pd.isna(raw_date) else ""
+                
+                donor_obj = {
+                    'raw_id': donor_id,
+                    'donater_name': str(name) if not pd.isna(name) else "",
+                    'address': str(addr) if not pd.isna(addr) else "",
+                    'formatted_amount_num': fmt_amt_num,
+                    'formatted_amount_let': str(amt_let) if not pd.isna(amt_let) else "",
+                    'formatted_date': fmt_date
+                }
+                self.donors_data.append(donor_obj)
+                
+                self.tree.insert("", tk.END, values=(
+                    "☐ မထုတ်ပါ",
+                    to_myanmar_digits(str(int(donor_id) if isinstance(donor_id, (int, float)) and not pd.isna(donor_id) else donor_id)),
+                    donor_obj['donater_name'].replace("\n", " / "),
+                    fmt_amt_num,
+                    donor_obj['address'],
+                    fmt_date
+                ))
+                count += 1
+                
+            children = self.tree.get_children()
+            if children:
+                last_item = children[-1]
+                vals = list(self.tree.item(last_item, "values"))
+                vals[0] = "☑ ထုတ်မည်"
+                self.tree.item(last_item, values=vals)
+                self.tree.selection_set(last_item)
+                self.tree.see(last_item)
+                
+            self.status_var.set(f"✅ Excel ဖိုင်မှ အလှူရှင် ({count}) ဦး ဖတ်ပြီးပါပြီ။ (နောက်ဆုံးအလှူရှင်ကိုသာ ရွေးထားပေးပါသည်)")
+        except Exception as e:
+            self.status_var.set(f"❌ Excel ဖတ်ရှုရာတွင် ချို့ယွင်းချက်ဖြစ်ပေါ်နေပါသည်: {str(e)}")
+            messagebox.showerror("Excel Error", f"Error reading Excel file:\n{str(e)}")
+
+    def generate_cards_action(self):
+        selected_donors = []
+        for i, item in enumerate(self.tree.get_children()):
+            vals = self.tree.item(item, "values")
+            if vals[0].startswith("☑"):
+                selected_donors.append(self.donors_data[i])
+                
+        if not selected_donors:
+            messagebox.showwarning("သတိပေးချက်", "ပရင့်ထုတ်ရန် အလှူရှင် အနည်းဆုံးတစ်ဦး ရွေးချယ်ပါ။ (Select at least 1 donor)")
+            return
+
+        self.save_config()
+
+        selected_font_name = self.font_cbb.get()
+        selected_font_path = self.fonts_map.get(selected_font_name, self.default_font_file)
+        if not os.path.exists(selected_font_path):
+            messagebox.showerror("Error", f"ရွေးချယ်ထားသော ဖောင့်ဖိုင် မတွေ့ပါ:\n{selected_font_path}")
+            return
+            
+        self.generator.font_path = selected_font_path
+
+        mode_str = self.output_mode.get()
+        mode_label = "Overlay" if mode_str == "overlay" else "FullCertificate"
+        
+        ver_id = int(time.time()) % 100000
+        output_filename = f"DonationCards_{mode_label}_{len(selected_donors)}donors_v{ver_id}.pdf"
+        output_path = os.path.join(self.base_dir, output_filename)
+        
+        selected_color_name = self.color_cbb.get()
+        hex_color = self.colors_map.get(selected_color_name, "#0066cc")
+        align_str = self.align_var.get()
+        line_height_val = float(self.line_height_var.get())
+        
+        self.status_var.set("🖨️ PDF ဖန်တီးနေပါသည်... (Generating OpenType-shaped PDF...)")
+        self.root.update_idletasks()
+        
+        try:
+            self.generator.generate_pdf(
+                donors=selected_donors,
+                output_pdf=output_path,
+                mode=mode_str,
+                offset_x=self.x_offset_var.get(),
+                offset_y=self.y_offset_var.get(),
+                line_height=line_height_val,
+                color_hex=hex_color,
+                align=align_str
+            )
+            self.status_var.set(f"🎉 အောင်မြင်ပါသည်။ ဖိုင်ကိုသိမ်းဆည်းလိုက်ပါပြီ: {output_filename}")
+            
+            resp = messagebox.askyesno("အောင်မြင်ပါသည် (Success)", f"အလှူရှင် ({len(selected_donors)}) ဦးအတွက် အတိအကျမှန်ကန်သော နေရာနှင့် ဖောင့်ဖြင့် PDF ဖန်တီးပြီးပါပြီ။\nဖိုင်ကို ယခုဖွင့်ကြည့်လိုပါသလား?\n\nFile: {output_filename}")
+            if resp:
+                webbrowser.open(output_path)
+                
+        except Exception as e:
+            self.status_var.set(f"❌ PDF ဖန်တီးရာတွင် အမှားဖြစ်ပေါ်နေပါသည်: {str(e)}")
+            messagebox.showerror("PDF Error", f"Error generating PDF:\n{str(e)}")
+
+    def open_output_folder(self):
+        try: os.startfile(self.base_dir)
+        except Exception: subprocess.Popen(['explorer', self.base_dir])
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = DonationCardGUI(root)
+    root.mainloop()
