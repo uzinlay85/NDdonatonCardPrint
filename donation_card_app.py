@@ -106,11 +106,11 @@ class PDFCardGenerator:
         self.height = 841.68
         
         self.fields = {
-            'amount_num': {'left': 79.4, 'w': 138.2, 'y': 427.0},
-            'amount_let': {'left': 224.4, 'w': 288.2, 'y': 427.0},
-            'name_start': {'left': 155.8, 'w': 282.0, 'y': 562.0},
-            'address': {'left': 155.5, 'w': 282.6, 'y': 653.0},
-            'date': {'left': 436.1, 'w': 114.8, 'y': 777.0}
+            'amount_num': {'left': 79.4, 'w': 138.2, 'y': 421.0},
+            'amount_let': {'left': 224.4, 'w': 288.2, 'y': 421.0},
+            'name_start': {'left': 155.8, 'w': 282.0, 'y': 553.0},
+            'address': {'left': 155.5, 'w': 282.6, 'y': 642.0},
+            'date': {'left': 436.1, 'w': 114.8, 'y': 763.5}
         }
 
     def generate_pdf(self, donors: list, output_pdf: str, mode: str = "overlay", 
