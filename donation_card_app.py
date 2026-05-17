@@ -6,6 +6,7 @@ import time
 import shutil
 import subprocess
 import webbrowser
+from html import escape
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import pandas as pd
@@ -102,20 +103,55 @@ class PDFCardGenerator:
     def __init__(self, font_path: str, bg_image_path: str = None):
         self.font_path = font_path
         self.bg_image_path = bg_image_path
-        self.width = 595.44
-        self.height = 841.68
+        self.width = 595.2
+        self.height = 841.92
+        self._load_template_page_size()
         
         self.fields = {
-            'amount_num': {'left': 74.4, 'w': 138.2, 'y': 421.0},
-            'amount_let': {'left': 224.4, 'w': 288.2, 'y': 421.0},
-            'name_start': {'left': 155.8, 'w': 282.0, 'y': 553.0},
-            'address': {'left': 155.8, 'w': 282.0, 'y': 642.0},
-            'date': {'left': 441.0, 'w': 100.0, 'y': 765.0}
+            'amount_num': {'left': 74.0, 'w': 145.0, 'line_y': 438.45},
+            'amount_let': {'left': 224.0, 'w': 296.5, 'line_y': 438.45},
+            'name_start': {'left': 155.8, 'w': 282.0, 'line_y': 569.2},
+            'address': {'left': 155.8, 'w': 282.0, 'line_y': 659.2},
+            'date': {'left': 441.0, 'w': 100.0, 'line_y': 779.0}
         }
+
+    def _load_template_page_size(self):
+        if not self.bg_image_path or not os.path.exists(self.bg_image_path):
+            return
+        try:
+            if self.bg_image_path.lower().endswith(".pdf"):
+                with fitz.open(self.bg_image_path) as doc:
+                    rect = doc[0].rect
+                    self.width = float(rect.width)
+                    self.height = float(rect.height)
+        except Exception:
+            pass
+
+    def _make_background_url(self, output_pdf: str):
+        if not self.bg_image_path or not os.path.exists(self.bg_image_path):
+            return "", None
+
+        bg_path = self.bg_image_path
+        temp_bg = None
+        if bg_path.lower().endswith(".pdf"):
+            temp_bg = os.path.join(os.path.dirname(output_pdf), "~temp_certificate_bg.png")
+            with fitz.open(bg_path) as doc:
+                page = doc[0]
+                rect = page.rect
+                self.width = float(rect.width)
+                self.height = float(rect.height)
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                pix.save(temp_bg)
+            bg_path = temp_bg
+
+        abs_bg_path = os.path.abspath(bg_path).replace('\\', '/')
+        if not abs_bg_path.startswith('/'):
+            abs_bg_path = '/' + abs_bg_path
+        return f"file://{abs_bg_path}", temp_bg
 
     def generate_pdf(self, donors: list, output_pdf: str, mode: str = "overlay", 
                      offset_x: float = 0.0, offset_y: float = 0.0, 
-                     line_height: float = 24.0, color_hex: str = "#0066cc",
+                     line_height: float = 25.0, color_hex: str = "#0066cc",
                      align: str = "center", base_font_size: float = 14.0,
                      font_weight: str = "normal"):
         browser_exe = find_chromium_browser()
@@ -127,28 +163,29 @@ class PDFCardGenerator:
             abs_font_path = '/' + abs_font_path
         font_url = f"file://{abs_font_path}"
 
-        abs_bg_path = os.path.abspath(self.bg_image_path).replace('\\', '/') if self.bg_image_path else ""
-        if abs_bg_path and not abs_bg_path.startswith('/'):
-            abs_bg_path = '/' + abs_bg_path
-        bg_url = f"file://{abs_bg_path}" if abs_bg_path else ""
+        bg_url, temp_bg = self._make_background_url(output_pdf) if mode == "full" else ("", None)
+        page_width = round(self.width, 2)
+        page_height = round(self.height, 2)
         
         pages_html = []
         for donor in donors:
             bg_html = ""
-            if mode == "full" and bg_url and os.path.exists(self.bg_image_path):
-                bg_html = f"<img src='{bg_url}' style='position: absolute; top:0; left:0; width: 595.44pt; height: 841.68pt; z-index: 1;' />"
+            if mode == "full" and bg_url:
+                bg_html = f"<img src='{bg_url}' style='position: absolute; top:0; left:0; width: {page_width}pt; height: {page_height}pt; z-index: 1;' />"
             
-            def get_field_div(text_str: str, field_key: str, custom_y: float = None):
+            def get_field_div(text_str: str, field_key: str, custom_line_y: float = None):
                 if not text_str or str(text_str).strip() == "": return ""
                 f_info = self.fields[field_key]
                 left_pos = round(f_info['left'] + offset_x, 2)
-                top_pos = round((custom_y if custom_y is not None else f_info['y']) + offset_y, 2)
                 width_pos = f_info['w']
                 
-                # Scale date proportionally (date is normally 12pt when base is 14pt)
+                # The template coordinates are the dotted-line centers. CSS uses top,
+                # so derive top dynamically to keep the text baseline on the line.
                 fs = base_font_size if field_key != 'date' else round(base_font_size * (12.0 / 14.0), 1)
+                line_y = custom_line_y if custom_line_y is not None else f_info['line_y']
+                top_pos = round(line_y - fs + offset_y, 2)
                 
-                return f"<div class='txt' style='top: {top_pos}pt; left: {left_pos}pt; width: {width_pos}pt; font-size: {fs}pt; text-align: {align}; font-weight: {font_weight};'>{text_str}</div>"
+                return f"<div class='txt' style='top: {top_pos}pt; left: {left_pos}pt; width: {width_pos}pt; font-size: {fs}pt; text-align: {align}; font-weight: {font_weight};'>{escape(str(text_str))}</div>"
 
             items = []
             items.append(get_field_div(donor['formatted_amount_num'], 'amount_num'))
@@ -156,8 +193,8 @@ class PDFCardGenerator:
             
             name_lines = wrap_myanmar_text(donor['donater_name'], max_chars=40)
             for idx, line in enumerate(name_lines[:2]):
-                curr_y = self.fields['name_start']['y'] + (idx * line_height)
-                items.append(get_field_div(line, 'name_start', custom_y=curr_y))
+                curr_y = self.fields['name_start']['line_y'] + (idx * line_height)
+                items.append(get_field_div(line, 'name_start', custom_line_y=curr_y))
                 
             items.append(get_field_div(donor['address'], 'address'))
             items.append(get_field_div(donor['formatted_date'], 'date'))
@@ -170,10 +207,10 @@ class PDFCardGenerator:
 <head>
 <meta charset='utf-8'>
 <style>
-@page {{ size: A4; margin: 0; }}
+@page {{ size: {page_width}pt {page_height}pt; margin: 0; }}
 @font-face {{ font-family: 'PrinterFont'; src: url('{font_url}'); }}
 body {{ margin: 0; padding: 0; font-family: 'PrinterFont', sans-serif; box-sizing: border-box; }}
-.page {{ width: 595.44pt; height: 841.68pt; position: relative; page-break-after: always; background: white; overflow: hidden; }}
+.page {{ width: {page_width}pt; height: {page_height}pt; position: relative; page-break-after: always; background: white; overflow: hidden; }}
 .txt {{ position: absolute; color: {color_hex}; z-index: 2; line-height: 1.2; white-space: nowrap; }}
 </style>
 </head>
@@ -204,6 +241,9 @@ body {{ margin: 0; padding: 0; font-family: 'PrinterFont', sans-serif; box-sizin
         finally:
             if os.path.exists(temp_html):
                 try: os.remove(temp_html)
+                except Exception: pass
+            if temp_bg and os.path.exists(temp_bg):
+                try: os.remove(temp_bg)
                 except Exception: pass
 
 
@@ -253,7 +293,8 @@ class DonationCardGUI:
         self.default_excel_file = os.path.join(self.base_dir, "DonorsData.xlsx")
         self.excel_file = self.default_excel_file
         self.default_font_file = os.path.join(self.base_dir, "KoZ 008 Font", "008.ttf")
-        self.template_file = os.path.join(self.base_dir, "blank_card_template.jpg")
+        certificate_pdf = os.path.join(self.base_dir, "Certificate.pdf")
+        self.template_file = certificate_pdf if os.path.exists(certificate_pdf) else os.path.join(self.base_dir, "blank_card_template.jpg")
         self.config_file = os.path.join(self.base_dir, "printer_config.json")
         
         self.donors_data = []
@@ -513,7 +554,7 @@ class DonationCardGUI:
         row5 = ttk.Frame(style_frame)
         row5.pack(fill=tk.X)
         ttk.Label(row5, text="စာကြောင်း(၂)ကြောင်း အကွာအဝေး (Line Spacing):").pack(side=tk.LEFT)
-        self.line_height_var = tk.DoubleVar(value=24.0)
+        self.line_height_var = tk.DoubleVar(value=25.0)
         spin = ttk.Spinbox(row5, from_=18.0, to=36.0, increment=1.0, textvariable=self.line_height_var, width=8, command=self.save_config)
         spin.bind("<KeyRelease>", lambda e: self.save_config())
         spin.pack(side=tk.RIGHT)
@@ -530,10 +571,17 @@ class DonationCardGUI:
         
         def on_x_slide(v): self.x_val_label.config(text=f"{float(v):+.1f} pt")
         def on_slide_release(e): self.save_config()
+        def on_xy_entry_change(*_):
+            self.x_val_label.config(text=f"{self.x_offset_var.get():+.1f} pt")
+            self.y_val_label.config(text=f"{self.y_offset_var.get():+.1f} pt")
+            self.save_config()
             
         x_scale = ttk.Scale(x_slider_box, from_=-100.0, to=100.0, variable=self.x_offset_var, command=on_x_slide)
         x_scale.bind("<ButtonRelease-1>", on_slide_release)
         x_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        x_spin = ttk.Spinbox(x_slider_box, from_=-100.0, to=100.0, increment=0.5, textvariable=self.x_offset_var, width=7, command=on_xy_entry_change)
+        x_spin.bind("<KeyRelease>", lambda e: on_xy_entry_change())
+        x_spin.pack(side=tk.RIGHT, padx=(8, 0))
         self.x_val_label = ttk.Label(x_slider_box, text="+0.0 pt", width=8, anchor="e", font=('Segoe UI', 10, 'bold'), foreground="#2563eb")
         self.x_val_label.pack(side=tk.RIGHT, padx=(8, 0))
 
@@ -547,6 +595,9 @@ class DonationCardGUI:
         y_scale = ttk.Scale(y_slider_box, from_=-100.0, to=100.0, variable=self.y_offset_var, command=on_y_slide)
         y_scale.bind("<ButtonRelease-1>", on_slide_release)
         y_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        y_spin = ttk.Spinbox(y_slider_box, from_=-100.0, to=100.0, increment=0.5, textvariable=self.y_offset_var, width=7, command=on_xy_entry_change)
+        y_spin.bind("<KeyRelease>", lambda e: on_xy_entry_change())
+        y_spin.pack(side=tk.RIGHT, padx=(8, 0))
         self.y_val_label = ttk.Label(y_slider_box, text="+0.0 pt", width=8, anchor="e", font=('Segoe UI', 10, 'bold'), foreground="#2563eb")
         self.y_val_label.pack(side=tk.RIGHT, padx=(8, 0))
         
