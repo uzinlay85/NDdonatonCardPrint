@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import json
 import math
 import time
@@ -16,6 +17,7 @@ from PIL import Image, ImageTk
 # --- Helper Functions for Myanmar Formatting & Typography ---
 
 MYANMAR_DIGITS = {'0': '၀', '1': '၁', '2': '၂', '3': '၃', '4': '၄', '5': '၅', '6': '၆', '7': '၇', '8': '၈', '9': '၉'}
+MYANMAR_COMBINING = set('\u102B\u102C\u102D\u102E\u102F\u1030\u1031\u1032\u1033\u1034\u1035\u1036\u1037\u1038\u1039\u103A\u103B\u103C\u103D\u103E\u103F')
 
 def to_myanmar_digits(text: str) -> str:
     """Converts Western digits (0-9) in a string to Myanmar numerals (၀-၉)."""
@@ -44,41 +46,124 @@ def format_currency_number(amount: any, suffix: str = "  - ကျပ်") -> str
         return f"{mm_num}{suffix}"
     return mm_num
 
-def wrap_myanmar_text(text: str, max_chars: int = 40) -> list:
-    """Wraps Myanmar text into multiple lines."""
+def is_safe_myanmar_break(text: str, i: int) -> bool:
+    """Checks whether index i is a safe point to break Myanmar text without splitting clusters."""
+    if i <= 0 or i >= len(text):
+        return False
+    if text[i] in MYANMAR_COMBINING:
+        return False
+    if text[i - 1] == '\u1039':  # Virama (killer/subscript)
+        return False
+    return True
+
+def split_into_two_balanced_lines(text: str, max_chars: int = 58) -> list:
+    """Splits long Myanmar text into 2 natural, balanced lines without dropping any characters."""
+    text = text.strip()
+    if not text:
+        return [""]
+    if len(text) <= max_chars:
+        return [text]
+
+    candidates = []
+    
+    # 1. Spaces (highest priority for natural word breaks)
+    for match in re.finditer(r'\s+', text):
+        candidates.append((match.start(), match.end(), 12))
+        
+    # 2. Punctuation / delimiters: ၊ ။ + - – — / ( )
+    for match in re.finditer(r'[၊၊။+\-–—/()]\s*', text):
+        idx = match.end()
+        if is_safe_myanmar_break(text, idx):
+            candidates.append((match.start(), idx, 10))
+            
+    # 3. Break AFTER these Myanmar postpositions / particles
+    break_after = [
+        'တို့အားရည်စူး၍', 'တို့အားရည်စူး', 'အားရည်စူး၍', 'အားရည်စူး',
+        'တို့အားအမှူးထား၍', 'အားအမှူးထား၍', 'အမှူးထား၍',
+        'တို့၏', 'တို့အား', 'တို့နှင့်', 'တို့နှင့်',
+        'နှင့်', 'နှင့်', '၏', 'အား', '၍',
+        'ကောင်းမှု', 'မိသားစု'
+    ]
+    for p in break_after:
+        start = 0
+        while True:
+            pos = text.find(p, start)
+            if pos == -1: break
+            end_pos = pos + len(p)
+            if is_safe_myanmar_break(text, end_pos):
+                candidates.append((end_pos, end_pos, 8))
+            start = pos + 1
+
+    # 4. Break BEFORE these phrase initiators
+    break_before = [
+        'မွေးနေ့အလှူ', 'အလှူတော်', 'ရည်စူး၍', 'ရည်စူး',
+        'ကျန်ရစ်သူ', 'သား၊သမီး', 'သားသမီး', 'မိသားစု'
+    ]
+    for p in break_before:
+        start = 0
+        while True:
+            pos = text.find(p, start)
+            if pos == -1: break
+            if is_safe_myanmar_break(text, pos):
+                candidates.append((pos, pos, 8))
+            start = pos + 1
+
+    mid = len(text) / 2.0
+    best_score = float('inf')
+    best_split = None
+
+    for cut_start, cut_end, weight in candidates:
+        l1 = text[:cut_start].strip()
+        l2 = text[cut_end:].strip()
+        if not l1 or not l2:
+            continue
+        diff = abs(len(l1) - len(l2))
+        overflow = max(0, len(l1) - max_chars) + max(0, len(l2) - max_chars)
+        score = diff + (overflow * 15) - (weight * 2.5)
+        if score < best_score:
+            best_score = score
+            best_split = (l1, l2)
+
+    if best_split:
+        return [best_split[0], best_split[1]]
+
+    # Fallback: find closest safe break to midpoint
+    mid_int = int(mid)
+    for offset in range(len(text)):
+        for idx in [mid_int - offset, mid_int + offset]:
+            if is_safe_myanmar_break(text, idx):
+                return [text[:idx].strip(), text[idx:].strip()]
+
+    return [text[:mid_int].strip(), text[mid_int:].strip()]
+
+def wrap_myanmar_text(text: str, max_chars: int = 58, max_lines: int = 2) -> list:
+    """Wraps Myanmar text into up to `max_lines` (default 2 lines) with intelligent balanced splitting."""
     if pd.isna(text) or text is None or str(text).strip() == "":
         return [""]
     text_str = str(text).strip()
+    
+    # 1. Handle explicit user newlines
     if "\n" in text_str or "\\n" in text_str:
-        raw_lines = text_str.replace("\\n", "\n").split("\n")
-        final_lines = []
-        for line in raw_lines:
-            final_lines.extend(wrap_single_line(line, max_chars))
-        return final_lines
-    else:
-        return wrap_single_line(text_str, max_chars)
-
-def wrap_single_line(line: str, max_chars: int) -> list:
-    line = line.strip()
-    if len(line) <= max_chars:
-        return [line]
-    words = line.split(" ")
-    if len(words) == 1:
-        return [line[i:i+max_chars] for i in range(0, len(line), max_chars)]
-    chunks = []
-    current_chunk = []
-    current_len = 0
-    for word in words:
-        if current_len + len(word) + 1 > max_chars and current_chunk:
-            chunks.append(" ".join(current_chunk))
-            current_chunk = [word]
-            current_len = len(word)
+        raw_lines = [l.strip() for l in text_str.replace("\\n", "\n").split("\n") if l.strip()]
+        if not raw_lines:
+            return [""]
+        if len(raw_lines) <= max_lines:
+            return raw_lines
         else:
-            current_chunk.append(word)
-            current_len += len(word) + 1
-    if current_chunk:
-        chunks.append(" ".join(current_chunk))
-    return chunks
+            # Consolidate surplus lines into max_lines without dropping words
+            first_line = raw_lines[0]
+            rest_line = " ".join(raw_lines[1:])
+            return [first_line, rest_line]
+            
+    # 2. Single continuous line under threshold
+    if len(text_str) <= max_chars:
+        return [text_str]
+    
+    # 3. Intelligent balanced 2-line wrap
+    if max_lines == 2:
+        return split_into_two_balanced_lines(text_str, max_chars=max_chars)
+    else:
+        return [text_str]
 
 def find_chromium_browser():
     """Locates Microsoft Edge or Google Chrome executable on Windows."""
@@ -185,18 +270,28 @@ class PDFCardGenerator:
                 line_y = custom_line_y if custom_line_y is not None else f_info['line_y']
                 top_pos = round(line_y - fs + offset_y, 2)
                 
-                return f"<div class='txt' style='top: {top_pos}pt; left: {left_pos}pt; width: {width_pos}pt; font-size: {fs}pt; text-align: {align}; font-weight: {font_weight};'>{escape(str(text_str))}</div>"
+                if align == "center":
+                    center_x = round(left_pos + width_pos / 2.0, 2)
+                    style = f"top: {top_pos}pt; left: {center_x}pt; transform: translateX(-50%); font-size: {fs}pt; font-weight: {font_weight}; text-align: center;"
+                else:
+                    style = f"top: {top_pos}pt; left: {left_pos}pt; width: {width_pos}pt; font-size: {fs}pt; font-weight: {font_weight}; text-align: left;"
+                
+                return f"<div class='txt' style='{style}'>{escape(str(text_str))}</div>"
 
             items = []
             items.append(get_field_div(donor['formatted_amount_num'], 'amount_num'))
             items.append(get_field_div(donor['formatted_amount_let'], 'amount_let'))
             
-            name_lines = wrap_myanmar_text(donor['donater_name'], max_chars=40)
+            name_lines = wrap_myanmar_text(donor['donater_name'], max_chars=58, max_lines=2)
             for idx, line in enumerate(name_lines[:2]):
                 curr_y = self.fields['name_start']['line_y'] + (idx * line_height)
                 items.append(get_field_div(line, 'name_start', custom_line_y=curr_y))
                 
-            items.append(get_field_div(donor['address'], 'address'))
+            addr_lines = wrap_myanmar_text(donor['address'], max_chars=58, max_lines=2)
+            for idx, line in enumerate(addr_lines[:2]):
+                curr_y = self.fields['address']['line_y'] + (idx * line_height)
+                items.append(get_field_div(line, 'address', custom_line_y=curr_y))
+                
             items.append(get_field_div(donor['formatted_date'], 'date'))
             
             page_content = f"<div class='page'>{bg_html}{''.join(items)}</div>"
